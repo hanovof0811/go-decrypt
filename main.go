@@ -97,7 +97,7 @@ func decryptHandler(w http.ResponseWriter, r *http.Request) {
 	if copyErr != nil || waitErr != nil {
 		// Đọc stderr nếu có lỗi
 		errOutput, _ := io.ReadAll(stderr)
-		http.Error(w,"Decrypt error:", string(errOutput))
+		fmt.Println("Decrypt error:", string(errOutput))
 
 		http.Error(w, "Decryption process failed", http.StatusInternalServerError)
 		return
