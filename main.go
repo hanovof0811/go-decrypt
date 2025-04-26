@@ -4,7 +4,9 @@ import (
 	"bytes"
 	"fmt"
 	"io"
+	"io/ioutil"
 	"net/http"
+	"os"
 	"os/exec"
 )
 
@@ -59,48 +61,78 @@ func decryptHandler(w http.ResponseWriter, r *http.Request) {
 		}
 		defer segmentFile.Close()
 
-		// Chỉ đọc segment
+		// Chỉ đọc segment và lưu vào RAM
 		if _, err := io.Copy(&mergedBytes, segmentFile); err != nil {
 			http.Error(w, "Failed to read segment file", http.StatusInternalServerError)
 			return
 		}
 	}
 
-	// Chuẩn bị command mp4decrypt
-	cmd := exec.Command("mp4decrypt", "--key", fmt.Sprintf("%s:%s", keyID, key), "-", "-")
-	cmd.Stdin = bytes.NewReader(mergedBytes.Bytes())
+	// Tạo file tạm để lưu dữ liệu đầu ra
+	tmpOutputFile, err := ioutil.TempFile("", "decrypted-*.mp4")
+	if err != nil {
+		http.Error(w, "Failed to create temporary output file", http.StatusInternalServerError)
+		return
+	}
+	defer os.Remove(tmpOutputFile.Name()) // Xóa file tạm sau khi xử lý xong
 
-	// Pipe stdout và stderr
-	stdout, err := cmd.StdoutPipe()
+	// Tạo file tạm để lưu stderr
+	tmpStderrFile, err := ioutil.TempFile("", "stderr-*.txt")
 	if err != nil {
-		http.Error(w, "Failed to create stdout pipe", http.StatusInternalServerError)
+		http.Error(w, "Failed to create temporary stderr file", http.StatusInternalServerError)
 		return
 	}
-	stderr, err := cmd.StderrPipe()
+	defer os.Remove(tmpStderrFile.Name()) // Xóa file tạm sau khi xử lý xong
+
+	// Lưu dữ liệu mergedBytes vào file tạm
+	tmpInputFile, err := ioutil.TempFile("", "input-*.mp4")
 	if err != nil {
-		http.Error(w, "Failed to create stderr pipe", http.StatusInternalServerError)
+		http.Error(w, "Failed to create temporary input file", http.StatusInternalServerError)
 		return
 	}
+	defer os.Remove(tmpInputFile.Name()) // Xóa file tạm sau khi xử lý xong
+
+	if _, err := tmpInputFile.Write(mergedBytes.Bytes()); err != nil {
+		http.Error(w, "Failed to write to temporary input file", http.StatusInternalServerError)
+		return
+	}
+
+	// Chuẩn bị command mp4decrypt
+	cmd := exec.Command("mp4decrypt", "--key", fmt.Sprintf("%s:%s", keyID, key), tmpInputFile.Name(), tmpOutputFile.Name())
+	cmd.Stderr = tmpStderrFile
 
 	if err := cmd.Start(); err != nil {
 		http.Error(w, "Failed to start decryption", http.StatusInternalServerError)
 		return
 	}
 
-	w.Header().Set("Content-Type", "video/mp4")
-
-	// Stream thẳng output từ mp4decrypt ra client
-	_, copyErr := io.Copy(w, stdout)
+	// Đọc stderr để biết lỗi nếu có
+	stderrData, err := ioutil.ReadFile(tmpStderrFile.Name())
+	if err != nil {
+		http.Error(w, "Failed to read stderr file", http.StatusInternalServerError)
+		return
+	}
 
 	waitErr := cmd.Wait()
 
-	if copyErr != nil || waitErr != nil {
-		// Đọc stderr nếu có lỗi
-		errOutput, _ := io.ReadAll(stderr)
-		fmt.Println("Decrypt error:", string(errOutput))
-		
-		// Trả lại lỗi chi tiết cho client
-		http.Error(w, fmt.Sprintf("Decryption process failed: %s", string(errOutput)), http.StatusInternalServerError)
+	// Nếu có lỗi trong quá trình thực thi, gửi lỗi về client
+	if waitErr != nil || len(stderrData) > 0 {
+		fmt.Println("Decrypt error:", string(stderrData))
+		http.Error(w, fmt.Sprintf("Decryption process failed: %s", string(stderrData)), http.StatusInternalServerError)
+		return
+	}
+
+	// Đọc và gửi dữ liệu output giải mã ra client
+	outputData, err := ioutil.ReadFile(tmpOutputFile.Name())
+	if err != nil {
+		http.Error(w, "Failed to read output file", http.StatusInternalServerError)
+		return
+	}
+
+	w.Header().Set("Content-Type", "video/mp4")
+	_, err = w.Write(outputData)
+	if err != nil {
+		http.Error(w, "Failed to send data to client", http.StatusInternalServerError)
 		return
 	}
 }
