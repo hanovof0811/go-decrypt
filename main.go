@@ -24,7 +24,7 @@ func decryptHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Tạo buffer để chứa toàn bộ dữ liệu
+	// Buffer để merge init và segment
 	var mergedBytes bytes.Buffer
 
 	if useInit == "1" {
@@ -42,12 +42,11 @@ func decryptHandler(w http.ResponseWriter, r *http.Request) {
 		}
 		defer segmentFile.Close()
 
-		// Gộp init vào buffer
+		// Gộp init + segment vào buffer
 		if _, err := io.Copy(&mergedBytes, initFile); err != nil {
 			http.Error(w, "Failed to read init file", http.StatusInternalServerError)
 			return
 		}
-		// Gộp segment vào buffer
 		if _, err := io.Copy(&mergedBytes, segmentFile); err != nil {
 			http.Error(w, "Failed to read segment file", http.StatusInternalServerError)
 			return
@@ -60,7 +59,7 @@ func decryptHandler(w http.ResponseWriter, r *http.Request) {
 		}
 		defer segmentFile.Close()
 
-		// Gộp chỉ segment vào buffer
+		// Chỉ đọc segment
 		if _, err := io.Copy(&mergedBytes, segmentFile); err != nil {
 			http.Error(w, "Failed to read segment file", http.StatusInternalServerError)
 			return
@@ -71,12 +70,12 @@ func decryptHandler(w http.ResponseWriter, r *http.Request) {
 	cmd := exec.Command("mp4decrypt", "--key", fmt.Sprintf("%s:%s", keyID, key), "-", "-")
 	cmd.Stdin = bytes.NewReader(mergedBytes.Bytes())
 
+	// Pipe stdout và stderr
 	stdout, err := cmd.StdoutPipe()
 	if err != nil {
 		http.Error(w, "Failed to create stdout pipe", http.StatusInternalServerError)
 		return
 	}
-
 	stderr, err := cmd.StderrPipe()
 	if err != nil {
 		http.Error(w, "Failed to create stderr pipe", http.StatusInternalServerError)
@@ -96,11 +95,12 @@ func decryptHandler(w http.ResponseWriter, r *http.Request) {
 	waitErr := cmd.Wait()
 
 	if copyErr != nil || waitErr != nil {
-		// Nếu có lỗi thì đọc stderr
+		// Đọc stderr nếu có lỗi
 		errOutput, _ := io.ReadAll(stderr)
 		fmt.Println("Decrypt error:", string(errOutput))
-
-		http.Error(w, "Decryption process failed", http.StatusInternalServerError)
+		
+		// Trả lại lỗi chi tiết cho client
+		http.Error(w, fmt.Sprintf("Decryption process failed: %s", string(errOutput)), http.StatusInternalServerError)
 		return
 	}
 }
