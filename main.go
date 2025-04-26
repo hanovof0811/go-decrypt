@@ -24,7 +24,7 @@ func decryptHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Buffer để merge init và segment
+	// Tạo buffer để chứa toàn bộ dữ liệu
 	var mergedBytes bytes.Buffer
 
 	if useInit == "1" {
@@ -42,11 +42,12 @@ func decryptHandler(w http.ResponseWriter, r *http.Request) {
 		}
 		defer segmentFile.Close()
 
-		// Gộp init + segment vào buffer
+		// Gộp init vào buffer
 		if _, err := io.Copy(&mergedBytes, initFile); err != nil {
 			http.Error(w, "Failed to read init file", http.StatusInternalServerError)
 			return
 		}
+		// Gộp segment vào buffer
 		if _, err := io.Copy(&mergedBytes, segmentFile); err != nil {
 			http.Error(w, "Failed to read segment file", http.StatusInternalServerError)
 			return
@@ -59,7 +60,7 @@ func decryptHandler(w http.ResponseWriter, r *http.Request) {
 		}
 		defer segmentFile.Close()
 
-		// Chỉ đọc segment
+		// Gộp chỉ segment vào buffer
 		if _, err := io.Copy(&mergedBytes, segmentFile); err != nil {
 			http.Error(w, "Failed to read segment file", http.StatusInternalServerError)
 			return
@@ -70,12 +71,12 @@ func decryptHandler(w http.ResponseWriter, r *http.Request) {
 	cmd := exec.Command("mp4decrypt", "--key", fmt.Sprintf("%s:%s", keyID, key), "-", "-")
 	cmd.Stdin = bytes.NewReader(mergedBytes.Bytes())
 
-	// Pipe stdout và stderr
 	stdout, err := cmd.StdoutPipe()
 	if err != nil {
 		http.Error(w, "Failed to create stdout pipe", http.StatusInternalServerError)
 		return
 	}
+
 	stderr, err := cmd.StderrPipe()
 	if err != nil {
 		http.Error(w, "Failed to create stderr pipe", http.StatusInternalServerError)
@@ -89,13 +90,13 @@ func decryptHandler(w http.ResponseWriter, r *http.Request) {
 
 	w.Header().Set("Content-Type", "video/mp4")
 
-	// Copy stdout (giải mã) về client
-	copyErr := io.Copy(w, stdout)
+	// Stream thẳng output từ mp4decrypt ra client
+	_, copyErr := io.Copy(w, stdout)
 
 	waitErr := cmd.Wait()
 
 	if copyErr != nil || waitErr != nil {
-		// Đọc stderr nếu có lỗi
+		// Nếu có lỗi thì đọc stderr
 		errOutput, _ := io.ReadAll(stderr)
 		fmt.Println("Decrypt error:", string(errOutput))
 
@@ -106,7 +107,7 @@ func decryptHandler(w http.ResponseWriter, r *http.Request) {
 
 func main() {
 	http.HandleFunc("/decrypt", decryptHandler)
-	fmt.Println("Server is running on :9900")
+	fmt.Println("Running on :9900")
 	err := http.ListenAndServe(":9900", nil)
 	if err != nil {
 		panic(err)
