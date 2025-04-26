@@ -8,18 +8,18 @@ import (
 )
 
 func decryptHandler(w http.ResponseWriter, r *http.Request) {
-	keyID := r.URL.Query().Get("keyid")
-	key := r.URL.Query().Get("key")
-	useInit := r.URL.Query().Get("useInit")
-
-	if len(keyID) != 32 || len(key) != 32 {
-		http.Error(w, "Invalid key or keyId", http.StatusBadRequest)
+	err := r.ParseMultipartForm(100 << 20) // max 100MB
+	if err != nil {
+		http.Error(w, "Failed to parse multipart form", http.StatusBadRequest)
 		return
 	}
 
-	err := r.ParseMultipartForm(100 << 20) // max 100MB
-	if err != nil {
-		http.Error(w, "Failed to parse multipart", http.StatusBadRequest)
+	keyID := r.FormValue("keyid")
+	key := r.FormValue("key")
+	useInit := r.FormValue("useInit")
+
+	if len(keyID) != 32 || len(key) != 32 {
+		http.Error(w, "Invalid key or keyId", http.StatusBadRequest)
 		return
 	}
 
@@ -57,22 +57,33 @@ func decryptHandler(w http.ResponseWriter, r *http.Request) {
 
 	stdout, err := cmd.StdoutPipe()
 	if err != nil {
-		http.Error(w, "Failed to get stdout", http.StatusInternalServerError)
+		http.Error(w, "Failed to create stdout pipe", http.StatusInternalServerError)
 		return
 	}
 
 	if err := cmd.Start(); err != nil {
-		http.Error(w, "Decryption failed to start", http.StatusInternalServerError)
+		http.Error(w, "Failed to start decryption", http.StatusInternalServerError)
 		return
 	}
 
 	w.Header().Set("Content-Type", "video/mp4")
-	io.Copy(w, stdout)
-	cmd.Wait()
+
+	// Stream thẳng output từ mp4decrypt ra client
+	_, copyErr := io.Copy(w, stdout)
+
+	waitErr := cmd.Wait()
+
+	if copyErr != nil || waitErr != nil {
+		http.Error(w, "Decryption process failed", http.StatusInternalServerError)
+		return
+	}
 }
 
 func main() {
 	http.HandleFunc("/decrypt", decryptHandler)
 	fmt.Println("Running on :9000")
-	http.ListenAndServe(":9000", nil)
+	err := http.ListenAndServe(":9000", nil)
+	if err != nil {
+		panic(err)
+	}
 }
