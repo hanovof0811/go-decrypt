@@ -129,7 +129,7 @@ func decryptHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	w.Header().Set("Content-Type", "video/mp4")
+	// w.Header().Set("Content-Type", "video/mp4")
 	_, err = w.Write(outputData)
 	if err != nil {
 		http.Error(w, "Failed to send data to client", http.StatusInternalServerError)
