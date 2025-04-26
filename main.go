@@ -61,6 +61,9 @@ func decryptHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// thêm dòng này để lấy stderr
+	stderr, _ := cmd.StderrPipe()
+	
 	if err := cmd.Start(); err != nil {
 		http.Error(w, "Failed to start decryption", http.StatusInternalServerError)
 		return
@@ -74,6 +77,10 @@ func decryptHandler(w http.ResponseWriter, r *http.Request) {
 	waitErr := cmd.Wait()
 
 	if copyErr != nil || waitErr != nil {
+		// đọc stderr để biết mp4decrypt báo lỗi gì
+		errOutput, _ := io.ReadAll(stderr)
+		fmt.Println("Decrypt error:", string(errOutput))
+		
 		http.Error(w, "Decryption process failed", http.StatusInternalServerError)
 		return
 	}
