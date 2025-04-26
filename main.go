@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"fmt"
 	"io"
 	"net/http"
@@ -23,7 +24,8 @@ func decryptHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	var reader io.Reader
+	// Buffer để merge init và segment
+	var mergedBytes bytes.Buffer
 
 	if useInit == "1" {
 		initFile, _, err := r.FormFile("init")
@@ -40,7 +42,15 @@ func decryptHandler(w http.ResponseWriter, r *http.Request) {
 		}
 		defer segmentFile.Close()
 
-		reader = io.MultiReader(initFile, segmentFile)
+		// Gộp init + segment vào buffer
+		if _, err := io.Copy(&mergedBytes, initFile); err != nil {
+			http.Error(w, "Failed to read init file", http.StatusInternalServerError)
+			return
+		}
+		if _, err := io.Copy(&mergedBytes, segmentFile); err != nil {
+			http.Error(w, "Failed to read segment file", http.StatusInternalServerError)
+			return
+		}
 	} else {
 		segmentFile, _, err := r.FormFile("segment")
 		if err != nil {
@@ -49,21 +59,29 @@ func decryptHandler(w http.ResponseWriter, r *http.Request) {
 		}
 		defer segmentFile.Close()
 
-		reader = segmentFile
+		// Chỉ đọc segment
+		if _, err := io.Copy(&mergedBytes, segmentFile); err != nil {
+			http.Error(w, "Failed to read segment file", http.StatusInternalServerError)
+			return
+		}
 	}
 
+	// Chuẩn bị command mp4decrypt
 	cmd := exec.Command("mp4decrypt", "--key", fmt.Sprintf("%s:%s", keyID, key), "-", "-")
-	cmd.Stdin = reader
+	cmd.Stdin = bytes.NewReader(mergedBytes.Bytes())
 
+	// Pipe stdout và stderr
 	stdout, err := cmd.StdoutPipe()
 	if err != nil {
 		http.Error(w, "Failed to create stdout pipe", http.StatusInternalServerError)
 		return
 	}
+	stderr, err := cmd.StderrPipe()
+	if err != nil {
+		http.Error(w, "Failed to create stderr pipe", http.StatusInternalServerError)
+		return
+	}
 
-	// thêm dòng này để lấy stderr
-	stderr, _ := cmd.StderrPipe()
-	
 	if err := cmd.Start(); err != nil {
 		http.Error(w, "Failed to start decryption", http.StatusInternalServerError)
 		return
@@ -71,16 +89,16 @@ func decryptHandler(w http.ResponseWriter, r *http.Request) {
 
 	w.Header().Set("Content-Type", "video/mp4")
 
-	// Stream thẳng output từ mp4decrypt ra client
-	_, copyErr := io.Copy(w, stdout)
+	// Copy stdout (giải mã) về client
+	copyErr := io.Copy(w, stdout)
 
 	waitErr := cmd.Wait()
 
 	if copyErr != nil || waitErr != nil {
-		// đọc stderr để biết mp4decrypt báo lỗi gì
+		// Đọc stderr nếu có lỗi
 		errOutput, _ := io.ReadAll(stderr)
-		fmt.Println("Decrypt error:", string(errOutput))
-		
+		http.Error(w,"Decrypt error:", string(errOutput))
+
 		http.Error(w, "Decryption process failed", http.StatusInternalServerError)
 		return
 	}
@@ -88,7 +106,7 @@ func decryptHandler(w http.ResponseWriter, r *http.Request) {
 
 func main() {
 	http.HandleFunc("/decrypt", decryptHandler)
-	fmt.Println("Running on :9000")
+	fmt.Println("Server is running on :9000")
 	err := http.ListenAndServe(":9000", nil)
 	if err != nil {
 		panic(err)
