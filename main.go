@@ -106,8 +106,8 @@ func decryptHandler(w http.ResponseWriter, r *http.Request) {
 
 func main() {
 	http.HandleFunc("/decrypt", decryptHandler)
-	fmt.Println("Server is running on :9000")
-	err := http.ListenAndServe(":9000", nil)
+	fmt.Println("Server is running on :9900")
+	err := http.ListenAndServe(":9900", nil)
 	if err != nil {
 		panic(err)
 	}
